@@ -3,7 +3,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import * as Joi from 'joi';
 import { PatientModule } from './patient/patient.module';
-import { AppController } from './app.controller';
+import { envVariableKeys } from './common/\bconst/env.const';
+import { CommonModule } from './common/common.module';
 
 @Module({
   imports: [
@@ -22,19 +23,20 @@ import { AppController } from './app.controller';
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
         type: 'mysql',
-        host: configService.get('DB_HOST'),
-        port: configService.get('DB_PORT'),
-        username: configService.get('DB_USERNAME'),
-        password: configService.get('DB_PASSWORD'),
-        database: configService.get('DB_DATABASE'),
+        host: configService.get(envVariableKeys.dbHost),
+        port: configService.get(envVariableKeys.dbPort),
+        username: configService.get(envVariableKeys.dbUsername),
+        password: configService.get(envVariableKeys.dbPassword),
+        database: configService.get(envVariableKeys.dbDatabase),
         entities: [__dirname + '/**/*.entity{.ts,.js}'],
         synchronize: true,
       }),
       inject: [ConfigService],
     }),
+    CommonModule,
     PatientModule,
   ],
-  controllers: [AppController],
+  controllers: [],
   providers: [],
 })
 export class AppModule {}

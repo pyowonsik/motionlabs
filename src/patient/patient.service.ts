@@ -1,8 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Like, Repository } from 'typeorm';
 import { Patient } from './entities/patient.entity';
 import * as XLSX from 'xlsx';
+import { GetPatientsDto } from './dto/get-patient.dto';
+import { CommonService } from 'src/common/common.service';
 
 interface ExcelRow {
   차트번호?: string;
@@ -18,6 +20,7 @@ export class PatientService {
   constructor(
     @InjectRepository(Patient)
     private patientRepository: Repository<Patient>,
+    private commonService: CommonService,
   ) {}
 
   private normalizePhone(phone: string | undefined): string {
@@ -202,6 +205,43 @@ export class PatientService {
         );
       }
       throw new Error('Failed to save patients to database: Unknown error');
+    }
+  }
+
+  async getPatients(dto: GetPatientsDto) {
+    try {
+      const qb = await this.patientRepository
+        .createQueryBuilder('patient')
+        .select();
+
+      this.commonService.applyPagePaginationParamsToQb(qb, dto);
+
+      if (dto.name) {
+        qb.andWhere('patient.name LIKE :name', { name: `%${dto.name}%` });
+      }
+
+      if (dto.phoneNumber) {
+        qb.andWhere('patient.phoneNumber LIKE :phoneNumber', {
+          phoneNumber: `%${dto.phoneNumber}%`,
+        });
+      }
+
+      if (dto.chartNumber) {
+        qb.andWhere('patient.chartNumber LIKE :chartNumber', {
+          chartNumber: `%${dto.chartNumber}%`,
+        });
+      }
+
+      const [patients, total] = await qb.getManyAndCount();
+
+      return {
+        total,
+        page: dto.page,
+        count: patients.length,
+        data: patients,
+      };
+    } catch (error) {
+      throw new Error('Failed to retrieve patients. Please try again later.');
     }
   }
 }

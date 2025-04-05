@@ -1,5 +1,4 @@
 import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
-
 @Entity('patient')
 export class Patient {
   @PrimaryGeneratedColumn()
