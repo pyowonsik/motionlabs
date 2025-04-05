@@ -104,15 +104,6 @@ export class PatientService {
     };
   }
 
-  // private getPatientKey(patient: Patient): string {
-  //   // 차트번호가 있으면 [이름, 전화번호, 차트번호]를 키로 사용
-  //   if (patient.chartNumber) {
-  //     return `${patient.name}|${patient.phoneNumber}|${patient.chartNumber}`;
-  //   }
-  //   // 차트번호가 없으면 [이름, 전화번호]를 키로 사용
-  //   return `${patient.name}|${patient.phoneNumber}`;
-  // }
-
   private mergePatientData(patients: Patient[]): Patient[] {
     const result: Patient[] = [];
 
@@ -120,9 +111,9 @@ export class PatientService {
     for (let i = patients.length - 1; i >= 0; i--) {
       const currentPatient = patients[i];
 
-      // console.log(
-      //   `Processing patient: ${currentPatient.chartNumber || 'No Chart'} - ${currentPatient.name}`,
-      // );
+      console.log(
+        `Processing patient: ${currentPatient.chartNumber || 'No Chart'} - ${currentPatient.name}`,
+      );
 
       // 이미 처리된 환자인지 확인
       const existingIndex = result.findIndex(
@@ -191,7 +182,6 @@ export class PatientService {
     const worksheet = workbook.Sheets[workbook.SheetNames[0]];
     const data = XLSX.utils.sheet_to_json(worksheet);
 
-    const errors: Array<{ row: number; reason: string }> = [];
     const patients: Patient[] = [];
 
     for (let i = 0; i < data.length; i++) {
@@ -200,18 +190,12 @@ export class PatientService {
         const mappedPatient = this.mapRowToPatient(row);
 
         if (!this.validatePatient(mappedPatient)) {
-          errors.push({ row: i + 1, reason: 'Invalid data format' });
           continue;
         }
 
         const patient = mappedPatient as Patient;
         patients.push(patient);
-      } catch (error) {
-        errors.push({
-          row: i + 1,
-          reason: error instanceof Error ? error.message : 'Unknown error',
-        });
-      }
+      } catch (error) {}
     }
 
     // 환자 데이터 병합
@@ -233,8 +217,6 @@ export class PatientService {
         totalRows: data.length,
         processedRows: mergedPatients.length,
         skippedRows: data.length - mergedPatients.length,
-        errors,
-        patients: mergedPatients,
       };
     } catch (error: unknown) {
       if (error instanceof Error) {
