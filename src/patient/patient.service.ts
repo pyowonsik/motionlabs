@@ -4,14 +4,6 @@ import { Repository } from 'typeorm';
 import { Patient } from './entities/patient.entity';
 import * as XLSX from 'xlsx';
 
-interface PatientMap {
-  [key: string]: Patient; // 차트번호를 키로 사용
-}
-
-interface NoChartPatientMap {
-  [key: string]: Patient; // 이름|전화번호를 키로 사용
-}
-
 interface ExcelRow {
   차트번호?: string;
   이름?: string;
@@ -111,10 +103,6 @@ export class PatientService {
     for (let i = patients.length - 1; i >= 0; i--) {
       const currentPatient = patients[i];
 
-      console.log(
-        `Processing patient: ${currentPatient.chartNumber || 'No Chart'} - ${currentPatient.name}`,
-      );
-
       // 이미 처리된 환자인지 확인
       const existingIndex = result.findIndex(
         (p) =>
@@ -128,30 +116,19 @@ export class PatientService {
       );
 
       if (existingIndex !== -1) {
-        console.log(
-          `Merging with existing patient: ${result[existingIndex].chartNumber || 'No Chart'} - ${result[existingIndex].name}`,
-        );
         // 이미 존재하는 환자와 병합
         result[existingIndex] = this.mergePatients(
           result[existingIndex],
           currentPatient,
         );
       } else {
-        // console.log(
-        //   `Adding new patient: ${currentPatient.chartNumber || 'No Chart'} - ${currentPatient.name}`,
-        // );
         // 새로운 환자 추가
         result.push(currentPatient);
       }
     }
 
     // 차트번호 순으로 정렬
-    return result.sort((a, b) => {
-      if (!a.chartNumber && !b.chartNumber) return 0;
-      if (!a.chartNumber) return 1;
-      if (!b.chartNumber) return -1;
-      return a.chartNumber.localeCompare(b.chartNumber);
-    });
+    return result;
   }
 
   private mergePatients(existing: Patient, newPatient: Patient): Patient {
