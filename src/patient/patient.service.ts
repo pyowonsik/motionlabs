@@ -1,10 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Like, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Patient } from './entities/patient.entity';
 import * as XLSX from 'xlsx';
-import { GetPatientsDto } from './dto/get-patient.dto';
 import { CommonService } from 'src/common/common.service';
+import { GetPatientsDto } from './dto/get-patient.dto';
 
 interface ExcelRow {
   차트번호?: string;
@@ -23,64 +23,46 @@ export class PatientService {
     private commonService: CommonService,
   ) {}
 
+  // 휴대폰 번호 정규화
   private normalizePhone(phone: string | undefined): string {
     if (!phone) return '';
     const digits = phone.replace(/\D/g, '');
-    // 11자리 (01000000000) 또는 13자리 (010-0000-0000) 형식만 허용
-    if (digits.length === 11 && digits.startsWith('010')) {
-      return digits;
-    }
-    if (phone.length === 13 && phone.match(/^010-\d{4}-\d{4}$/)) {
-      return phone;
-    }
+    if (digits.length === 11 && digits.startsWith('010')) return digits;
+    if (phone.length === 13 && phone.match(/^010-\d{4}-\d{4}$/)) return phone;
     return '';
   }
 
+  // 주민 등록록 번호 정규화
   private normalizeRegistrationNumber(number: string | undefined): string {
     if (!number) return '';
     const cleaned = number.trim();
-
-    // 6자리 (900101)
     if (/^\d{6}$/.test(cleaned)) return cleaned;
-
-    // 7자리 (9001011)
     if (/^\d{7}$/.test(cleaned) && ['1', '2', '3', '4'].includes(cleaned[6]))
       return cleaned;
-
-    // 8자리 (900101-1)
     if (/^\d{6}-[1-4]$/.test(cleaned)) return cleaned;
-
-    // 9자리 이상 (900101-1111111 또는 900101-1*****)
     if (/^\d{6}-[1-4][\d*]{6,}$/.test(cleaned)) return cleaned;
-
     return '';
   }
 
-  private validatePatient(patient: Partial<Patient>): boolean {
-    // name이 없거나 빈 문자열이면 false
+  // 휴대폰 번호 정규화
+  private normalizePhoneNumber(phoneNumber: string): string {
+    return phoneNumber.replace(/[-\s]/g, '');
+  }
+
+  // 환자 정보 데이터 검증
+  private validatePatientInfo(patient: Partial<Patient>): boolean {
     if (!patient.name || !patient.name.trim()) return false;
 
     const validations = [
-      // 이름: 1자 이상 255자 이하
       patient.name.trim().length >= 1 && patient.name.trim().length <= 255,
-
-      // 전화번호: 11자리 (01000000000) 또는 13자리 (010-0000-0000) 형식
       !!this.normalizePhone(patient.phoneNumber),
-
-      // 주민등록번호: 6자리, 7자리, 8자리, 9자리 이상 형식
       !patient.registrationNumber ||
         !!this.normalizeRegistrationNumber(patient.registrationNumber),
-
-      // 차트번호: 255자 이하
       !patient.chartNumber ||
         (typeof patient.chartNumber === 'string' &&
           patient.chartNumber.length <= 255),
-
-      // 주소: 255자 이하
       !patient.address ||
         (typeof patient.address === 'string' && patient.address.length <= 255),
-
-      // 메모: 255자 이하
       !patient.memo ||
         (typeof patient.memo === 'string' && patient.memo.length <= 255),
     ];
@@ -88,6 +70,7 @@ export class PatientService {
     return validations.every(Boolean);
   }
 
+  // 비정형 데이터 표준화
   private mapRowToPatient(row: ExcelRow): Partial<Patient> {
     return {
       chartNumber: row.차트번호?.toString().trim() || '',
@@ -99,115 +82,149 @@ export class PatientService {
     };
   }
 
+  // 중복 환자 병합
   private mergePatientData(patients: Patient[]): Patient[] {
-    const result: Patient[] = [];
+    const mergedMap = new Map<string, Patient>();
+    let currentChartNumber = '';
+    let prevKey = '';
 
-    // 아래에서 위로 병합을 위해 역순으로 처리
-    for (let i = patients.length - 1; i >= 0; i--) {
-      const currentPatient = patients[i];
+    for (const patient of patients) {
+      const isSamePerson = prevKey === `${patient.name}-${patient.phoneNumber}`;
+      const chartNumber =
+        patient.chartNumber || (isSamePerson ? currentChartNumber : '');
+      const mergeKey = `${chartNumber}-${patient.name}-${patient.phoneNumber}`;
 
-      // 이미 처리된 환자인지 확인
-      const existingIndex = result.findIndex(
-        (p) =>
-          p.name === currentPatient.name &&
-          p.phoneNumber === currentPatient.phoneNumber &&
-          // 차트번호가 있는 경우 완전히 일치해야 함
-          ((currentPatient.chartNumber &&
-            p.chartNumber === currentPatient.chartNumber) ||
-            // 차트번호가 없는 경우 이름과 전화번호만 일치하면 됨
-            !currentPatient.chartNumber),
-      );
-
-      if (existingIndex !== -1) {
-        // 이미 존재하는 환자와 병합
-        result[existingIndex] = this.mergePatients(
-          result[existingIndex],
-          currentPatient,
-        );
+      if (!mergedMap.has(mergeKey)) {
+        mergedMap.set(mergeKey, { ...patient, chartNumber });
       } else {
-        // 새로운 환자 추가
-        result.push(currentPatient);
+        const existing = mergedMap.get(mergeKey)!;
+        mergedMap.set(mergeKey, this.mergePatients(existing, patient));
       }
+
+      if (patient.chartNumber) {
+        currentChartNumber = patient.chartNumber;
+      }
+
+      prevKey = `${patient.name}-${patient.phoneNumber}`;
     }
 
-    // 차트번호 순으로 정렬
-    return result;
+    return Array.from(mergedMap.values());
   }
 
+  // 병합데이터 처리
   private mergePatients(existing: Patient, newPatient: Patient): Patient {
     return {
       id: existing.id,
-      // 차트번호는 기존 값 유지 (비어있지 않은 경우)
       chartNumber: existing.chartNumber || newPatient.chartNumber,
-
-      // 이름과 전화번호는 식별자이므로 변경되지 않음
       name: existing.name,
       phoneNumber: existing.phoneNumber,
-
-      // 아래에서 위로 병합하므로 기존 값이 우선
       registrationNumber:
-        existing.registrationNumber || newPatient.registrationNumber,
-      address: existing.address || newPatient.address,
-      memo: existing.memo || newPatient.memo,
+        newPatient.registrationNumber || existing.registrationNumber,
+      address: newPatient.address || existing.address,
+      memo: newPatient.memo || existing.memo,
     };
   }
 
-  private normalizePhoneNumber(phoneNumber: string): string {
-    // 하이픈과 공백 제거
-    return phoneNumber.replace(/[-\s]/g, '');
-  }
-
+  // 엑셀 파일 업로드
   async processExcelFile(file: Express.Multer.File) {
-    const workbook = XLSX.read(file.buffer);
+    const workbook = XLSX.read(file.buffer, {
+      type: 'buffer',
+      cellDates: true,
+    });
     const worksheet = workbook.Sheets[workbook.SheetNames[0]];
     const data = XLSX.utils.sheet_to_json(worksheet);
-
     const patients: Patient[] = [];
 
-    for (let i = 0; i < data.length; i++) {
-      try {
-        const row = data[i] as ExcelRow;
-        const mappedPatient = this.mapRowToPatient(row);
-
-        if (!this.validatePatient(mappedPatient)) {
-          continue;
-        }
-
-        const patient = mappedPatient as Patient;
-        patients.push(patient);
-      } catch (error) {}
-    }
-
-    // 환자 데이터 병합
-    const mergedPatients = this.mergePatientData(patients);
-
-    // 전화번호 정규화
-    for (const patient of mergedPatients) {
-      patient.phoneNumber = this.normalizePhoneNumber(patient.phoneNumber);
-    }
-
-    try {
-      await this.patientRepository.clear();
-
-      if (mergedPatients.length > 0) {
-        await this.patientRepository.save(mergedPatients);
+    for (const row of data as ExcelRow[]) {
+      const mappedPatient = this.mapRowToPatient(row);
+      if (this.validatePatientInfo(mappedPatient)) {
+        patients.push(mappedPatient as Patient);
       }
+    }
+    try {
+      const mergedPatients = this.mergePatientData(patients);
+
+      // 전화번호 포맷 정리
+      for (const patient of mergedPatients) {
+        patient.phoneNumber = this.normalizePhoneNumber(patient.phoneNumber);
+      }
+
+      for (const patient of mergedPatients) {
+        patient.phoneNumber = this.normalizePhoneNumber(patient.phoneNumber);
+      }
+
+      const patientRecords = await this.patientRepository.find();
+
+      const newPatients: Patient[] = [];
+      const updatePatients: Patient[] = [];
+
+      for (const patient of mergedPatients) {
+        const existPatient = patientRecords.find(
+          (record) =>
+            record.name === patient.name &&
+            record.phoneNumber === patient.phoneNumber,
+        );
+
+        // const isChartNumberExistsInDB = patient.chartNumber
+        //   ? patientRecords.some(
+        //       (record) => record.chartNumber === patient.chartNumber,
+        //     )
+        //   : false;
+
+        if (existPatient) {
+          // if (!isChartNumberExistsInDB) {
+          // }
+          // - `id: 15366` 는 `A3` 에 의해 INSERT
+          // - 차트번호가 존재하지 않는 EXCEL 열의 식별자를 부분집합으로 가지는 데이터베이스의 레코드가 존재하지 않는다면 새로 저장합니다.
+
+          if (!existPatient.chartNumber && patient.chartNumber) {
+            // case 1: DB 차트 없음 + Excel 차트 있음
+            existPatient.chartNumber = patient.chartNumber;
+          }
+
+          //   // case 2: DB 차트 있음 + Excel 차트 없음
+          // if (existPatient.chartNumber && !patient.chartNumber) {
+          //   // chartNumber는 유지
+          // }
+
+          // 공통 업데이트 (둘 다 업데이트 하는 필드)
+          existPatient.registrationNumber = patient.registrationNumber;
+          existPatient.address = patient.address;
+          existPatient.memo = patient.memo;
+
+          updatePatients.push(existPatient);
+        } else {
+          // 신규 등록
+          newPatients.push(patient);
+        }
+      }
+
+      // UPDATE 처리
+      if (updatePatients.length > 0) {
+        await this.patientRepository.save(updatePatients);
+      }
+
+      // INSERT 처리
+      if (newPatients.length > 0) {
+        await this.patientRepository.save(newPatients);
+      }
+
+      console.log('업데이트 대상:', updatePatients);
+      console.log('신규 추가 대상:', newPatients);
 
       return {
         totalRows: data.length,
         processedRows: mergedPatients.length,
         skippedRows: data.length - mergedPatients.length,
       };
-    } catch (error: unknown) {
-      if (error instanceof Error) {
-        throw new Error(
-          `Failed to save patients to database: ${error.message}`,
-        );
-      }
-      throw new Error('Failed to save patients to database: Unknown error');
+    } catch (error) {
+      throw new Error(
+        error instanceof Error
+          ? `Failed to save patients to database: ${error.message}`
+          : 'Failed to save patients to database: Unknown error',
+      );
     }
   }
-
   async getPatients(dto: GetPatientsDto) {
     try {
       const qb = await this.patientRepository
