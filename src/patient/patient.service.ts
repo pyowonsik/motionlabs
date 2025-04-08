@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, Connection } from 'typeorm';
 import { Patient } from './entities/patient.entity';
 import * as XLSX from 'xlsx';
 import { CommonService } from 'src/common/common.service';
@@ -21,6 +21,7 @@ export class PatientService {
     @InjectRepository(Patient)
     private patientRepository: Repository<Patient>,
     private commonService: CommonService,
+    private connection: Connection,
   ) {}
 
   // 휴대폰 번호 정규화
@@ -141,6 +142,7 @@ export class PatientService {
         patients.push(mappedPatient as Patient);
       }
     }
+
     try {
       const mergedPatients = this.mergePatientData(patients);
 
@@ -149,68 +151,7 @@ export class PatientService {
         patient.phoneNumber = this.normalizePhoneNumber(patient.phoneNumber);
       }
 
-      for (const patient of mergedPatients) {
-        patient.phoneNumber = this.normalizePhoneNumber(patient.phoneNumber);
-      }
-
-      const patientRecords = await this.patientRepository.find();
-
-      const newPatients: Patient[] = [];
-      const updatePatients: Patient[] = [];
-
-      for (const patient of mergedPatients) {
-        const existPatient = patientRecords.find(
-          (record) =>
-            record.name === patient.name &&
-            record.phoneNumber === patient.phoneNumber,
-        );
-
-        // const isChartNumberExistsInDB = patient.chartNumber
-        //   ? patientRecords.some(
-        //       (record) => record.chartNumber === patient.chartNumber,
-        //     )
-        //   : false;
-
-        if (existPatient) {
-          // if (!isChartNumberExistsInDB) {
-          // }
-          // - `id: 15366` 는 `A3` 에 의해 INSERT
-          // - 차트번호가 존재하지 않는 EXCEL 열의 식별자를 부분집합으로 가지는 데이터베이스의 레코드가 존재하지 않는다면 새로 저장합니다.
-
-          if (!existPatient.chartNumber && patient.chartNumber) {
-            // case 1: DB 차트 없음 + Excel 차트 있음
-            existPatient.chartNumber = patient.chartNumber;
-          }
-
-          //   // case 2: DB 차트 있음 + Excel 차트 없음
-          // if (existPatient.chartNumber && !patient.chartNumber) {
-          //   // chartNumber는 유지
-          // }
-
-          // 공통 업데이트 (둘 다 업데이트 하는 필드)
-          existPatient.registrationNumber = patient.registrationNumber;
-          existPatient.address = patient.address;
-          existPatient.memo = patient.memo;
-
-          updatePatients.push(existPatient);
-        } else {
-          // 신규 등록
-          newPatients.push(patient);
-        }
-      }
-
-      // UPDATE 처리
-      if (updatePatients.length > 0) {
-        await this.patientRepository.save(updatePatients);
-      }
-
-      // INSERT 처리
-      if (newPatients.length > 0) {
-        await this.patientRepository.save(newPatients);
-      }
-
-      console.log('업데이트 대상:', updatePatients);
-      console.log('신규 추가 대상:', newPatients);
+      await this.savePatients(mergedPatients);
 
       return {
         totalRows: data.length,
@@ -225,6 +166,67 @@ export class PatientService {
       );
     }
   }
+
+  private async savePatients(mergedPatients: Patient[]): Promise<void> {
+    const queryRunner = this.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const patientRecords = await queryRunner.manager.find(Patient);
+
+      const newPatients: Patient[] = [];
+      const updatePatients: Patient[] = [];
+
+      for (const patient of mergedPatients) {
+        const existPatient = patientRecords.find(
+          (record) =>
+            record.name === patient.name &&
+            record.phoneNumber === patient.phoneNumber,
+        );
+
+        const isChartNumberExistsInDB = patient.chartNumber
+          ? patientRecords.some(
+              (record) => record.chartNumber === patient.chartNumber,
+            )
+          : false;
+
+        if (existPatient) {
+          if (!existPatient.chartNumber && patient.chartNumber) {
+            existPatient.chartNumber = patient.chartNumber;
+          }
+
+          existPatient.registrationNumber = patient.registrationNumber;
+          existPatient.address = patient.address;
+          existPatient.memo = patient.memo;
+
+          updatePatients.push(existPatient);
+        } else if (!patient.chartNumber || !isChartNumberExistsInDB) {
+          newPatients.push(patient);
+        }
+      }
+
+      const updatePromise =
+        updatePatients.length > 0
+          ? queryRunner.manager.save(updatePatients)
+          : Promise.resolve();
+
+      const insertPromise =
+        newPatients.length > 0
+          ? queryRunner.manager.insert(Patient, newPatients)
+          : Promise.resolve();
+
+      await Promise.all([updatePromise, insertPromise]);
+
+      await queryRunner.commitTransaction();
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   async getPatients(dto: GetPatientsDto) {
     try {
       const qb = await this.patientRepository
