@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Connection } from 'typeorm';
+import { Repository, DataSource } from 'typeorm';
 import { Patient } from './entities/patient.entity';
 import * as XLSX from 'xlsx';
 import { CommonService } from 'src/common/common.service';
@@ -21,7 +21,7 @@ export class PatientService {
     @InjectRepository(Patient)
     private patientRepository: Repository<Patient>,
     private commonService: CommonService,
-    private connection: Connection,
+    private dataSource: DataSource,
   ) {}
 
   // 휴대폰 번호 정규화
@@ -168,7 +168,7 @@ export class PatientService {
   }
 
   private async savePatients(mergedPatients: Patient[]): Promise<void> {
-    const queryRunner = this.connection.createQueryRunner();
+    const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
