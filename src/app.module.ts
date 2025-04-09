@@ -3,8 +3,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import * as Joi from 'joi';
 import { PatientModule } from './patient/patient.module';
-import { envVariableKeys } from './common/\bconst/env.const';
 import { CommonModule } from './common/common.module';
+import { envVariableKeys } from './common/const/env.const';
 
 @Module({
   imports: [
